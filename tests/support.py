@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"
+
+# plugin_data_dir() follows HERMES_HOME on every call, so tests never touch the real one.
+os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="glance-test-home-")
 
 
 def load_glance():

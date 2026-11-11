@@ -4,14 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 
 from . import capture, state
 
 logger = logging.getLogger(__name__)
-
-# Fast Refresh needs a moment after the last write before the screen reflects it.
-SETTLE_SECONDS = 1.0
 
 
 def glance_check(args: dict, session_id: str = "", *, device: str = "", **kwargs) -> str:
@@ -63,14 +59,13 @@ def _check(session_id: str, device: str) -> dict:
             _record(sess, None, result)
         return result
 
-    time.sleep(SETTLE_SECONDS)
     with sess.lock:
         check_id = state.new_id()
         shots = state.shots_dir(session_id)
-        after_png = capture.screenshot(target, shots / f"{check_id}-after.png")
+        after_png, settled = capture.settle(target, shots / f"{check_id}-after.png", sess.last_edit_at)
         if sess.baseline is None:
             sess.baseline = state.Baseline(state.new_id(), str(after_png), target.to_dict())
-            result = {"verdict": "NO_BASELINE", "target": target.to_dict(), "regions": [], "settled": None,
+            result = {"verdict": "NO_BASELINE", "target": target.to_dict(), "regions": [], "settled": settled,
                       "compare_png": None, "layout": None, "after_png": str(after_png),
                       "reason": "Glance had no before-screenshot, so it saved the current screen as the "
                                 "baseline. Make the UI change, then call glance_check again."}
@@ -82,7 +77,7 @@ def _check(session_id: str, device: str) -> dict:
             d = diff.judge(before, after)
             layout = diff.write_compare(before, after, d, compare_png)
         result = {"verdict": d.verdict, "reason": d.reason, "changed_ratio": round(d.changed_ratio, 4),
-                  "regions": d.regions_json(), "target": target.to_dict(), "settled": None,
+                  "regions": d.regions_json(), "target": target.to_dict(), "settled": settled,
                   "compare_png": str(compare_png), "layout": layout,
                   "before_png": sess.baseline.png, "after_png": str(after_png)}
         _record(sess, check_id, result)

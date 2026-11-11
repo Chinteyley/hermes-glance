@@ -48,6 +48,7 @@ class Check:
 class Session:
     baseline: Baseline | None = None
     edit_seq: int = 0
+    last_edit_at: float | None = None
     check: Check | None = None
     delivered_check_id: str | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)

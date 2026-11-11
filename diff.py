@@ -78,7 +78,7 @@ def judge(before: Image.Image, after: Image.Image) -> Diff:
         return Diff(BLANK, f"The screen is empty: one colour covers {share:.1%} of it. A component likely "
                     "returns nothing, or the root failed to render.", 1.0)
     mask = changed_mask(b, a)
-    ratio = mask.histogram()[255] / (mask.width * mask.height)
+    ratio = changed_ratio(mask)
     if ratio < NO_CHANGE_RATIO:
         return Diff(NO_CHANGE, f"Nothing on screen changed ({ratio:.3%} of pixels differ). The edit may be in a "
                     "file this screen does not render, or set a style that was already in effect.", ratio)
@@ -93,6 +93,16 @@ def changed_mask(before: Image.Image, after: Image.Image) -> Image.Image:
     mask = worst.point(lambda v: 255 if v > PIXEL_TOLERANCE else 0)
     mask.paste(0, (0, 0, mask.width, status_bar_rows(mask.height)))
     return mask
+
+
+def changed_ratio(mask: Image.Image) -> float:
+    return mask.histogram()[255] / (mask.width * mask.height)
+
+
+def same_screen(first: Image.Image, second: Image.Image) -> bool:
+    """True when two frames would judge NO_CHANGE against each other: what settling waits for."""
+    a, b = first.convert("RGB"), second.convert("RGB")
+    return a.size == b.size and changed_ratio(changed_mask(a, b)) < NO_CHANGE_RATIO
 
 
 def status_bar_rows(height: int) -> int:

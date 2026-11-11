@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
 from . import capture, state
 from .verdicts import FAILING
@@ -17,8 +18,8 @@ WRITE_TOOLS = frozenset({"write_file", "patch"})
 _V4A_PATH = re.compile(r"^\*\*\* (?:Add File|Update File|Move to): (.+?)\s*$", re.M)
 
 # Baseline capture runs inside the edit's own hook, which Hermes fails closed after 30 s.
-BASELINE_FIND_TIMEOUT = 1.5
-BASELINE_SHOT_TIMEOUT = 2.5
+BASELINE_FIND_TIMEOUT = 1.0
+BASELINE_SHOT_TIMEOUT = 2.0
 MAX_NUDGE_ATTEMPT = 2
 
 NOT_LOOKED = ("Glance: you changed UI files but have not looked at the screen. "
@@ -48,6 +49,7 @@ def pre_tool_call(tool_name: str = "", args: dict | None = None, session_id: str
             if sess.phase() is state.Phase.IDLE:
                 _baseline_quietly(sess, session_id, device)
             sess.edit_seq += 1
+            sess.last_edit_at = time.time()
     except Exception:
         logger.warning("glance: pre_tool_call bookkeeping failed for %s", tool_name, exc_info=True)
     return None
