@@ -5,8 +5,8 @@ description: Look at the running app before calling a UI change done. When to ca
 
 # Glance
 
-Glance screenshots the booted iOS Simulator right before your first UI edit and keeps that
-screen as the baseline. A UI edit is a `write_file` or `patch` on a `.tsx`, `.jsx`, `.css`,
+Glance screenshots the booted iOS Simulator (or, when none is booted, the running Android
+emulator) right before your first UI edit and keeps that screen as the baseline. A UI edit is a `write_file` or `patch` on a `.tsx`, `.jsx`, `.css`,
 `.scss`, `.vue`, `.svelte`, `.swift`, `.kt` or `.dart` file.
 
 ## When to call glance_check
@@ -25,7 +25,10 @@ If you finish without looking, Glance sends you back once with a message asking 
 | ERROR_SCREEN | The app shows the React Native or Expo error overlay. | Read the error with your tools, fix the code, check again. |
 | BLANK | The screen is empty or one colour. | A component returns nothing or the root failed to render. Fix it and check again. |
 | NO_BASELINE | There was no before-screenshot. The current screen is now the baseline. | Make the change, then call glance_check again. |
-| NO_TARGET | No simulator is running. | Say in your reply that the change was not checked on a device. |
+| NO_TARGET | No simulator or emulator is running. | Say in your reply that the change was not checked on a device. |
+
+If `settled` is false, the screen was still moving when Glance gave up waiting; call glance_check
+once more before you trust the verdict.
 
 PASS means the screen changed, not that it changed correctly. Look at `regions` and the compare
 image before you claim the change matches the request.
