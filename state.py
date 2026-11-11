@@ -8,7 +8,8 @@ The phase is derived, never stored:
 A PASS reads as IDLE, so the next UI edit takes a fresh baseline.
 
 A look records how the agent saw a check's compare image: SHOWN when glance_check put the pixels in
-its tool result, TOLD when pre_verify had to tell it that it could not see them.
+its tool result, TOLD when pre_verify sent the agent back about that check (a failure, or a PASS it
+could not see), so each check sends it back at most once.
 """
 
 from __future__ import annotations

@@ -93,7 +93,12 @@ def _nudge(session_id: str) -> str | None:
     snap = state.snapshot(session_id)
     if snap.phase in (state.Phase.BASELINED, state.Phase.STALE):
         return NOT_LOOKED
+    # A failing check sends the agent back once. A second try on the same check means it disagrees
+    # (say it set a style that was already in effect on purpose), so the next nudge waits for a new check.
     if snap.phase is state.Phase.CHECKED and snap.check.verdict in FAILING:
+        if snap.look is not None:
+            return None
+        state.record_look(session_id, snap.check.id, state.TOLD)
         return _failure_message(snap.check)
     # A PASS the agent never saw gets one honest nudge, then the agent may finish.
     if snap.check and snap.check.verdict == PASS and snap.look is None:

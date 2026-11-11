@@ -78,14 +78,17 @@ class StateMachineTest(unittest.TestCase):
                                                      "*** Update File: src/Card.tsx\n*** End Patch"})
         self.assertIs(self.phase(), state.Phase.BASELINED)
 
-    def test_failing_check_is_checked_and_sent_back_until_the_throttle(self):
+    def test_failing_check_is_sent_back_once_and_a_new_failing_check_again(self):
         self.edit()
         self.assertEqual(self.look("noop-wrong-file")["verdict"], "NO_CHANGE")
         self.assertIs(self.phase(), state.Phase.CHECKED)
         nudge = self.verify()
         self.assertEqual(nudge["action"], "continue")
         self.assertIn("NO_CHANGE", nudge["message"])
-        self.assertIsNone(self.verify(attempt=hooks.MAX_NUDGE_ATTEMPT))
+        self.assertIsNone(self.verify(attempt=1))
+        self.edit()
+        self.look("noop-wrong-file")
+        self.assertIn("NO_CHANGE", self.verify(attempt=1)["message"])
 
     def test_edit_after_a_check_is_stale(self):
         self.edit()
