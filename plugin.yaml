@@ -1,0 +1,20 @@
+name: glance
+version: "0.1.0"
+manifest_version: 2
+api_version: 1
+description: "Hermes can't call a UI change done until it has looked: Glance diffs before and after screenshots of the running iOS Simulator and sends the agent back when the edit changed nothing, crashed to an error screen, or left the screen blank."
+author: Chinteyley
+license: MIT
+homepage: https://github.com/Chinteyley/hermes-glance
+requires_hermes: ">=0.22.6"
+tags: [ios, simulator, ui, screenshots, verification]
+provides_tools: [glance_check, glance_baseline]
+provides_hooks: [pre_tool_call, pre_verify, transform_llm_output]
+python_dependencies:
+  - "Pillow>=10.1,<14"
+config_schema:
+  device:
+    type: str
+    default: ""
+    label: "Device"
+    description: "Simulator UDID to capture. Empty picks the booted simulator."
