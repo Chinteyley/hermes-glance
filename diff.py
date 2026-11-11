@@ -69,16 +69,16 @@ def judge(before: Image.Image, after: Image.Image) -> Diff:
     a = after.convert("RGB")
     if a.size != b.size:
         a = a.resize(b.size)
+    mask = changed_mask(b, a)
+    ratio = changed_ratio(mask)
     small = a.reduce(_ANALYSIS_REDUCE)
     if is_error_screen(small):
         return Diff(ERROR_SCREEN, "The app shows the React Native error screen instead of the UI. Read the "
-                    "error in the compare image or the Metro log, fix the code, then call glance_check again.", 1.0)
+                    "error in the compare image or the Metro log, fix the code, then call glance_check again.", ratio)
     share = dominant_share(small)
     if share >= BLANK_SHARE:
         return Diff(BLANK, f"The screen is empty: one colour covers {share:.1%} of it. A component likely "
-                    "returns nothing, or the root failed to render.", 1.0)
-    mask = changed_mask(b, a)
-    ratio = changed_ratio(mask)
+                    "returns nothing, or the root failed to render.", ratio)
     if ratio < NO_CHANGE_RATIO:
         return Diff(NO_CHANGE, f"Nothing on screen changed ({ratio:.3%} of pixels differ). The edit may be in a "
                     "file this screen does not render, or set a style that was already in effect.", ratio)
