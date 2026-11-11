@@ -20,7 +20,7 @@ If you finish without looking, Glance sends you back once with a message asking 
 
 | Verdict | Meaning | What to do |
 |---|---|---|
-| PASS | The screen changed. `regions` lists where. | Confirm the changed regions match what was asked, then finish. |
+| PASS | The screen changed. `regions` lists where, and the compare image is in the result. | Look at the after half. Confirm it shows what was asked and nothing from the before half went missing, then finish. |
 | NO_CHANGE | The edit changed nothing on screen. | You likely edited a file the screen does not use, or a style that was already in effect. Find the component that renders the screen and edit that. |
 | ERROR_SCREEN | The app shows the React Native or Expo error overlay. | Read the error with your tools, fix the code, check again. |
 | BLANK | The screen is empty or one colour. | A component returns nothing or the root failed to render. Fix it and check again. |
@@ -30,8 +30,10 @@ If you finish without looking, Glance sends you back once with a message asking 
 If `settled` is false, the screen was still moving when Glance gave up waiting; call glance_check
 once more before you trust the verdict.
 
-PASS means the screen changed, not that it changed correctly. Look at `regions` and the compare
-image before you claim the change matches the request.
+PASS means the screen changed, not that it changed correctly: an element that disappeared is a change
+too. On PASS, glance_check loads the compare image into your context, so you see the after screen
+yourself. Judge it before you claim the change matches the request. If your model cannot take images,
+Glance says so; then tell the user you did not see the result on screen.
 
 ## The compare image
 

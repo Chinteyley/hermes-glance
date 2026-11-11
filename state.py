@@ -6,6 +6,9 @@ The phase is derived, never stored:
   CHECKED    the baseline's latest check is as new as the latest UI edit
   STALE      a UI edit happened after the latest check
 A PASS reads as IDLE, so the next UI edit takes a fresh baseline.
+
+A look records how the agent saw a check's compare image: SHOWN when glance_check put the pixels in
+its tool result, TOLD when pre_verify had to tell it that it could not see them.
 """
 
 from __future__ import annotations
@@ -36,7 +39,11 @@ _SCHEMA = (
     """CREATE TABLE IF NOT EXISTS sessions (
         session_id TEXT PRIMARY KEY, baseline_id TEXT, edit_seq INTEGER NOT NULL DEFAULT 0,
         last_edit_at REAL, delivered_check_id TEXT)""",
+    """CREATE TABLE IF NOT EXISTS looks (
+        check_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, how TEXT NOT NULL, looked_at REAL NOT NULL)""",
 )
+
+SHOWN, TOLD = "shown", "told"
 
 
 class Phase(Enum):
@@ -72,6 +79,7 @@ class Snapshot:
     check: Check | None  # latest check against the active baseline
     latest: Check | None  # latest check of any kind, whose compare image gets delivered
     delivered_check_id: str | None
+    look: str | None = None  # SHOWN or TOLD for `check`, None while the agent has not seen it
 
     @property
     def phase(self) -> Phase:
@@ -115,15 +123,18 @@ def snapshot(session_id: str) -> Snapshot:
         row = conn.execute("SELECT baseline_id, edit_seq, last_edit_at, delivered_check_id FROM sessions "
                            "WHERE session_id = ?", (key,)).fetchone()
         baseline_id, edit_seq, last_edit_at, delivered = row or (None, 0, None, None)
-        baseline = check = None
+        baseline = check = look = None
         if baseline_id:
             b = conn.execute("SELECT id, png_path, target_json FROM baselines WHERE id = ?", (baseline_id,)).fetchone()
             baseline = Baseline(b[0], b[1], json.loads(b[2])) if b else None
             check = _check(conn.execute(f"SELECT {_CHECK_COLUMNS} FROM checks WHERE session_id = ? AND baseline_id = ? "
                                         "ORDER BY rowid DESC LIMIT 1", (key, baseline_id)).fetchone())
+            if check:
+                seen = conn.execute("SELECT how FROM looks WHERE check_id = ?", (check.id,)).fetchone()
+                look = seen[0] if seen else None
         latest = _check(conn.execute(f"SELECT {_CHECK_COLUMNS} FROM checks WHERE session_id = ? "
                                      "ORDER BY rowid DESC LIMIT 1", (key,)).fetchone())
-    return Snapshot(edit_seq, last_edit_at, baseline, check, latest, delivered)
+    return Snapshot(edit_seq, last_edit_at, baseline, check, latest, delivered, look)
 
 
 def _ensure_session(conn, key: str) -> None:
@@ -153,6 +164,11 @@ def save_check(session_id: str, check: Check, after_png: str | None, changed_rat
         conn.execute("INSERT INTO checks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (check.id, key, check.baseline_id, after_png, check.compare_png, check.verdict, changed_ratio,
                       json.dumps(check.regions), check.reason, time.time(), check.edit_seq))
+
+
+def record_look(session_id: str, check_id: str, how: str) -> None:
+    with _db() as conn:
+        conn.execute("INSERT OR IGNORE INTO looks VALUES (?, ?, ?, ?)", (check_id, _key(session_id), how, time.time()))
 
 
 def mark_delivered(session_id: str, check_id: str) -> None:

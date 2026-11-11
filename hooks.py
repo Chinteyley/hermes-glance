@@ -7,7 +7,7 @@ import logging
 import re
 
 from . import capture, state
-from .verdicts import FAILING
+from .verdicts import FAILING, PASS
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,10 @@ MAX_NUDGE_ATTEMPT = 2
 
 NOT_LOOKED = ("Glance: you changed UI files but have not looked at the screen. "
               "Call glance_check, then finish.")
+NOT_SEEN = ("Glance: PASS means the screen changed, not that it changed correctly, and Glance could not show you "
+            "the after screen ({compare}) as an image: the active model does not take images in tool results, or "
+            "vision is off. Check the result against the request with what you have. If you cannot confirm it, "
+            "say in your reply that you did not see it on screen.")
 
 
 def is_ui_path(path: str) -> bool:
@@ -76,13 +80,25 @@ def pre_verify(session_id: str = "", attempt: int = 0, changed_paths: list | Non
     try:
         if attempt >= MAX_NUDGE_ATTEMPT or not any(is_ui_path(p) for p in changed_paths or ()):
             return None
-        snap = state.snapshot(session_id)
-        if snap.phase in (state.Phase.BASELINED, state.Phase.STALE):
-            return {"action": "continue", "message": NOT_LOOKED}
-        if snap.phase is state.Phase.CHECKED and snap.check.verdict in FAILING:
-            return {"action": "continue", "message": _failure_message(snap.check)}
+        message = _nudge(session_id)
+        if message:
+            logger.info("glance: pre_verify continue, attempt %d, session %s: %s", attempt, session_id, message)
+            return {"action": "continue", "message": message}
     except Exception:
         logger.warning("glance: pre_verify failed", exc_info=True)
+    return None
+
+
+def _nudge(session_id: str) -> str | None:
+    snap = state.snapshot(session_id)
+    if snap.phase in (state.Phase.BASELINED, state.Phase.STALE):
+        return NOT_LOOKED
+    if snap.phase is state.Phase.CHECKED and snap.check.verdict in FAILING:
+        return _failure_message(snap.check)
+    # A PASS the agent never saw gets one honest nudge, then the agent may finish.
+    if snap.check and snap.check.verdict == PASS and snap.look is None:
+        state.record_look(session_id, snap.check.id, state.TOLD)
+        return NOT_SEEN.format(compare=snap.check.compare_png)
     return None
 
 

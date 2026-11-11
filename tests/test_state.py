@@ -12,6 +12,16 @@ from glance import capture, hooks, state, tools  # noqa: E402
 
 SIM = capture.Target("ios", "SIM-1", "iPhone")
 UI_EDIT = {"path": "/app/src/Checkout.tsx", "content": "export default null"}
+IMAGE = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}}
+
+
+def vision_model(name, args, **kwargs):
+    """vision_analyze as a vision-capable main model answers it: the pixels, natively."""
+    return {"_multimodal": True, "content": [{"type": "text", "text": args["question"]}, IMAGE]}
+
+
+def text_only_model(name, args, **kwargs):
+    return json.dumps({"success": True, "analysis": "A dark checkout screen."})
 
 
 class Screen:
@@ -42,9 +52,10 @@ class StateMachineTest(unittest.TestCase):
     def edit(self, tool="write_file", args=UI_EDIT):
         self.assertIsNone(hooks.pre_tool_call(tool_name=tool, args=args, session_id=self.session))
 
-    def look(self, case: str, side: str = "after") -> dict:
+    def look(self, case: str, side: str = "after", dispatch=vision_model) -> dict:
         self.screen.frame = FIXTURES / case / f"{side}.png"
-        return json.loads(tools.glance_check({}, session_id=self.session))
+        self.raw = tools.glance_check({}, session_id=self.session, dispatch=dispatch)
+        return json.loads(self.raw["text_summary"] if isinstance(self.raw, dict) else self.raw)
 
     def verify(self, attempt=0):
         return hooks.pre_verify(session_id=self.session, attempt=attempt, changed_paths=[UI_EDIT["path"]])
@@ -83,16 +94,26 @@ class StateMachineTest(unittest.TestCase):
         self.assertIs(self.phase(), state.Phase.STALE)
         self.assertEqual(self.verify()["message"], hooks.NOT_LOOKED)
 
-    def test_pass_resets_to_idle_and_the_next_edit_takes_a_fresh_baseline(self):
+    def test_pass_shows_the_compare_image_resets_to_idle_and_the_next_edit_takes_a_fresh_baseline(self):
         self.edit()
         first = state.snapshot(self.session).baseline
         self.assertEqual(self.look("button-color")["verdict"], "PASS")
+        self.assertEqual(self.raw["content"][-1], IMAGE)
         self.assertIs(self.phase(), state.Phase.IDLE)
         self.assertIsNone(self.verify())
         self.edit()
         snap = state.snapshot(self.session)
         self.assertIs(snap.phase, state.Phase.BASELINED)
         self.assertNotEqual(snap.baseline.id, first.id)
+
+    def test_pass_the_agent_could_not_see_is_sent_back_once(self):
+        self.edit()
+        self.assertEqual(self.look("button-removed", dispatch=text_only_model)["verdict"], "PASS")
+        self.assertIsInstance(self.raw, str)
+        nudge = self.verify()
+        self.assertEqual(nudge["action"], "continue")
+        self.assertIn("could not show you", nudge["message"])
+        self.assertIsNone(self.verify(attempt=1))
 
     def test_check_without_a_baseline_saves_one(self):
         result = self.look("button-color", "before")

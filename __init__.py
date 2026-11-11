@@ -13,7 +13,7 @@ def register(ctx):
 
     ctx.register_tool(
         name="glance_check", toolset="glance", schema=schemas.GLANCE_CHECK,
-        handler=lambda args, **kw: tools.glance_check(args, device=device(), **kw),
+        handler=lambda args, **kw: tools.glance_check(args, device=device(), dispatch=ctx.dispatch_tool, **kw),
         description="Diff the simulator screen against the pre-edit baseline", emoji="👀",
     )
     ctx.register_tool(

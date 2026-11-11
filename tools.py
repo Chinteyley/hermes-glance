@@ -1,4 +1,5 @@
-"""glance_check and glance_baseline. Handlers return JSON strings and never raise."""
+"""glance_check and glance_baseline. Handlers return JSON strings, or on PASS the multimodal envelope that
+carries the compare image, and never raise."""
 
 from __future__ import annotations
 
@@ -6,14 +7,22 @@ import json
 import logging
 
 from . import capture, state
-from .verdicts import NO_BASELINE, NO_TARGET
+from .verdicts import NO_BASELINE, NO_TARGET, PASS
 
 logger = logging.getLogger(__name__)
 
+LOOK = ("This is Glance's compare image for a PASS: the before screen on the left, the after screen on the right, "
+        "changed regions outlined in red. PASS only means the screen changed. Does the after half show what the "
+        "user asked for, and is anything from the before half missing? If it is wrong, fix it and call "
+        "glance_check again.")
 
-def glance_check(args: dict, session_id: str = "", *, device: str = "", **kwargs) -> str:
+
+def glance_check(args: dict, session_id: str = "", *, device: str = "", dispatch=None, **kwargs) -> str | dict:
     try:
-        return json.dumps(check(session_id, device))
+        result = check(session_id, device)
+        if result["verdict"] == PASS and dispatch is not None:
+            return _shown(session_id, result, dispatch, kwargs.get("task_id"))
+        return json.dumps(result)
     except Exception as exc:
         logger.exception("glance_check failed")
         return json.dumps({"error": f"glance_check failed: {exc}"})
@@ -31,6 +40,23 @@ def glance_baseline(args: dict, session_id: str = "", *, device: str = "", **kwa
     except Exception as exc:
         logger.exception("glance_baseline failed")
         return json.dumps({"error": f"glance_baseline failed: {exc}"})
+
+
+def _shown(session_id: str, result: dict, dispatch, task_id: str | None) -> str | dict:
+    """A PASS only says the screen changed, so the compare image goes in front of the model through
+    vision_analyze. On a model that takes images in tool results that attaches the pixels, and the result
+    becomes one envelope with Glance's JSON first. Otherwise the JSON carries whatever vision_analyze said
+    instead, and pre_verify tells the agent it has not seen the screen."""
+    try:
+        seen = dispatch("vision_analyze", {"image_url": result["compare_png"], "question": LOOK}, task_id=task_id)
+    except Exception as exc:
+        logger.warning("glance: vision_analyze on the compare image failed", exc_info=True)
+        seen = f"vision_analyze failed: {exc}"
+    if not (isinstance(seen, dict) and seen.get("_multimodal") is True):
+        return json.dumps({**result, "vision_analyze": seen})
+    state.record_look(session_id, result["check_id"], state.SHOWN)
+    text = json.dumps(result)
+    return {"_multimodal": True, "content": [{"type": "text", "text": text}, *seen["content"]], "text_summary": text}
 
 
 def take_baseline(session_id: str, target: capture.Target, timeout: float = 3.0,
@@ -91,4 +117,4 @@ def _record(session_id: str, check_id: str, baseline: state.Baseline | None, edi
         id=check_id, baseline_id=baseline.id if baseline else None, verdict=result["verdict"],
         reason=result["reason"], regions=result["regions"], compare_png=result["compare_png"], edit_seq=edit_seq,
     ), after_png=result.get("after_png"), changed_ratio=result.get("changed_ratio"))
-    return result
+    return {"check_id": check_id, **result}
