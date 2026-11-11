@@ -4,7 +4,7 @@
 
 Glance is a Hermes plugin that won't let the agent call a UI change done until it has looked at the running app. It screenshots the iOS Simulator (or an Android emulator) right before the agent's first UI edit, screenshots it again when the agent checks its work, and diffs the two. If the edit changed nothing, crashed to an error screen, or left the screen blank, Glance sends the agent back to fix it.
 
-Verdicts are deterministic image checks. Glance makes no model calls and no network calls.
+Verdicts are deterministic image checks with no model calls. On `PASS`, Glance shows the agent the compare image through Hermes' own `vision_analyze` so it can see what changed. Glance makes no network calls of its own.
 
 ## Install
 
