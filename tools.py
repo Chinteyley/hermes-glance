@@ -6,13 +6,14 @@ import json
 import logging
 
 from . import capture, state
+from .verdicts import NO_BASELINE, NO_TARGET
 
 logger = logging.getLogger(__name__)
 
 
 def glance_check(args: dict, session_id: str = "", *, device: str = "", **kwargs) -> str:
     try:
-        return json.dumps(_check(session_id, device))
+        return json.dumps(check(session_id, device))
     except Exception as exc:
         logger.exception("glance_check failed")
         return json.dumps({"error": f"glance_check failed: {exc}"})
@@ -23,9 +24,8 @@ def glance_baseline(args: dict, session_id: str = "", *, device: str = "", **kwa
         target = capture.find_target(device)
         if target is None:
             return json.dumps(_no_target(device))
-        sess = state.session(session_id)
-        with sess.lock:
-            baseline = take_baseline(sess, session_id, target)
+        with state.lock(session_id):
+            baseline = take_baseline(session_id, target, trigger_tool="glance_baseline")
         return json.dumps({"baseline_png": baseline.png, "target": target.to_dict(),
                            "message": "Saved the current screen as the baseline for the next glance_check."})
     except Exception as exc:
@@ -33,61 +33,62 @@ def glance_baseline(args: dict, session_id: str = "", *, device: str = "", **kwa
         return json.dumps({"error": f"glance_baseline failed: {exc}"})
 
 
-def take_baseline(sess: state.Session, session_id: str, target: capture.Target,
-                  timeout: float = 3.0) -> state.Baseline:
+def take_baseline(session_id: str, target: capture.Target, timeout: float = 3.0,
+                  trigger_tool: str = "", trigger_path: str = "") -> state.Baseline:
     baseline_id = state.new_id()
     png = capture.screenshot(target, state.shots_dir(session_id) / f"{baseline_id}-before.png", timeout)
-    sess.baseline = state.Baseline(baseline_id, str(png), target.to_dict())
-    return sess.baseline
+    baseline = state.Baseline(baseline_id, str(png), target.to_dict())
+    state.save_baseline(session_id, baseline, trigger_tool, trigger_path)
+    return baseline
 
 
 def _no_target(device: str) -> dict:
-    where = f"simulator {device}" if device else "a booted iOS Simulator"
-    return {"verdict": "NO_TARGET", "reason": f"Glance found no {where}, so it could not look at the screen.",
+    where = f"device {device}" if device else "a booted iOS Simulator or Android emulator"
+    return {"verdict": NO_TARGET, "reason": f"Glance found no {where}, so it could not look at the screen.",
             "regions": [], "target": None, "settled": None, "compare_png": None, "layout": None}
 
 
-def _check(session_id: str, device: str) -> dict:
-    from . import diff
+def check(session_id: str, device: str) -> dict:
     from PIL import Image
 
-    sess = state.session(session_id)
-    target = capture.find_target(device)
-    if target is None:
-        result = _no_target(device)
-        with sess.lock:
-            _record(sess, None, result)
-        return result
+    from . import diff
 
-    with sess.lock:
+    with state.lock(session_id):
+        snap = state.snapshot(session_id)
         check_id = state.new_id()
-        shots = state.shots_dir(session_id)
-        after_png, settled = capture.settle(target, shots / f"{check_id}-after.png", sess.last_edit_at)
-        if sess.baseline is None:
-            sess.baseline = state.Baseline(state.new_id(), str(after_png), target.to_dict())
-            result = {"verdict": "NO_BASELINE", "target": target.to_dict(), "regions": [], "settled": settled,
-                      "compare_png": None, "layout": None, "after_png": str(after_png),
-                      "reason": "Glance had no before-screenshot, so it saved the current screen as the "
-                                "baseline. Make the UI change, then call glance_check again."}
-            _record(sess, check_id, result)
-            return result
+        target = capture.find_target(device)
+        if target is None:
+            return _record(session_id, check_id, snap.baseline, snap.edit_seq, _no_target(device))
 
-        compare_png = shots / f"glance-compare-{check_id}.png"
-        with Image.open(sess.baseline.png) as before, Image.open(after_png) as after:
+        after_png, settled = capture.settle(target, state.shots_dir(session_id) / f"{check_id}-after.png",
+                                            snap.last_edit_at)
+        if snap.baseline is None:
+            baseline = state.Baseline(state.new_id(), str(after_png), target.to_dict())
+            state.save_baseline(session_id, baseline, trigger_tool="glance_check")
+            return _record(session_id, check_id, baseline, snap.edit_seq, {
+                "verdict": NO_BASELINE, "target": target.to_dict(), "regions": [], "settled": settled,
+                "compare_png": None, "layout": None, "after_png": str(after_png),
+                "reason": "Glance had no before-screenshot, so it saved the current screen as the baseline. "
+                          "Make the UI change, then call glance_check again."})
+
+        compare_png = after_png.with_name(f"glance-compare-{check_id}.png")
+        with Image.open(snap.baseline.png) as before, Image.open(after_png) as after:
             d = diff.judge(before, after)
             layout = diff.write_compare(before, after, d, compare_png)
-        result = {"verdict": d.verdict, "reason": d.reason, "changed_ratio": round(d.changed_ratio, 4),
-                  "regions": d.regions_json(), "target": target.to_dict(), "settled": settled,
-                  "compare_png": str(compare_png), "layout": layout,
-                  "before_png": sess.baseline.png, "after_png": str(after_png)}
-        _record(sess, check_id, result)
-        return result
+        reason = d.reason
+        if not settled:
+            reason += (f" The screen was still changing after {capture.SETTLE_TIMEOUT:.0f} s, so this frame may "
+                       "be mid-animation; call glance_check again if the verdict looks wrong.")
+        return _record(session_id, check_id, snap.baseline, snap.edit_seq, {
+            "verdict": d.verdict, "reason": reason, "changed_ratio": round(d.changed_ratio, 4),
+            "regions": d.regions_json(), "target": target.to_dict(), "settled": settled,
+            "compare_png": str(compare_png), "layout": layout,
+            "before_png": snap.baseline.png, "after_png": str(after_png)})
 
 
-def _record(sess: state.Session, check_id: str | None, result: dict) -> None:
-    sess.check = state.Check(
-        id=check_id or state.new_id(),
-        baseline_id=sess.baseline.id if sess.baseline else None,
-        verdict=result["verdict"], reason=result["reason"], regions=result["regions"],
-        compare_png=result["compare_png"], edit_seq=sess.edit_seq,
-    )
+def _record(session_id: str, check_id: str, baseline: state.Baseline | None, edit_seq: int, result: dict) -> dict:
+    state.save_check(session_id, state.Check(
+        id=check_id, baseline_id=baseline.id if baseline else None, verdict=result["verdict"],
+        reason=result["reason"], regions=result["regions"], compare_png=result["compare_png"], edit_seq=edit_seq,
+    ), after_png=result.get("after_png"), changed_ratio=result.get("changed_ratio"))
+    return result

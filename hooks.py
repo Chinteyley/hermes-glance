@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 
 from . import capture, state
 from .verdicts import FAILING
@@ -17,9 +16,12 @@ UI_SUFFIXES = (".tsx", ".jsx", ".css", ".scss", ".sass", ".less", ".vue", ".svel
 WRITE_TOOLS = frozenset({"write_file", "patch"})
 _V4A_PATH = re.compile(r"^\*\*\* (?:Add File|Update File|Move to): (.+?)\s*$", re.M)
 
-# Baseline capture runs inside the edit's own hook, which Hermes fails closed after 30 s.
-BASELINE_FIND_TIMEOUT = 1.0
-BASELINE_SHOT_TIMEOUT = 2.0
+# Baseline capture runs inside the edit's own hook, which Hermes fails closed after 30 s. These cap it
+# at about 3.6 s (lock, simctl then adb probe, screenshot); a simulator screenshot takes about 0.45 s.
+BASELINE_FIND_TIMEOUT = 0.8
+BASELINE_SHOT_TIMEOUT = 1.5
+# A running glance_check holds the session lock while it settles; the edit does not wait for it.
+BASELINE_LOCK_TIMEOUT = 0.5
 MAX_NUDGE_ATTEMPT = 2
 
 NOT_LOOKED = ("Glance: you changed UI files but have not looked at the screen. "
@@ -42,27 +44,30 @@ def edited_paths(tool_name: str, args: dict) -> list[str]:
 def pre_tool_call(tool_name: str = "", args: dict | None = None, session_id: str = "", *,
                   device: str = "", **kwargs) -> None:
     try:
-        if not any(is_ui_path(p) for p in edited_paths(tool_name, args or {})):
+        ui_paths = [p for p in edited_paths(tool_name, args or {}) if is_ui_path(p)]
+        if not ui_paths:
             return None
-        sess = state.session(session_id)
-        with sess.lock:
-            if sess.phase() is state.Phase.IDLE:
-                _baseline_quietly(sess, session_id, device)
-            sess.edit_seq += 1
-            sess.last_edit_at = time.time()
+        session_lock = state.lock(session_id)
+        if session_lock.acquire(timeout=BASELINE_LOCK_TIMEOUT):
+            try:
+                if state.snapshot(session_id).phase is state.Phase.IDLE:
+                    _baseline_quietly(session_id, device, tool_name, ui_paths[0])
+            finally:
+                session_lock.release()
+        state.note_edit(session_id)
     except Exception:
         logger.warning("glance: pre_tool_call bookkeeping failed for %s", tool_name, exc_info=True)
     return None
 
 
-def _baseline_quietly(sess: state.Session, session_id: str, device: str) -> None:
+def _baseline_quietly(session_id: str, device: str, tool_name: str, path: str) -> None:
     from .tools import take_baseline
 
     target = capture.find_target(device, timeout=BASELINE_FIND_TIMEOUT)
     if target is None:
         return
     try:
-        take_baseline(sess, session_id, target, timeout=BASELINE_SHOT_TIMEOUT)
+        take_baseline(session_id, target, BASELINE_SHOT_TIMEOUT, trigger_tool=tool_name, trigger_path=path)
     except capture.CaptureError as exc:
         logger.info("glance: no baseline before the edit: %s", exc)
 
@@ -71,14 +76,11 @@ def pre_verify(session_id: str = "", attempt: int = 0, changed_paths: list | Non
     try:
         if attempt >= MAX_NUDGE_ATTEMPT or not any(is_ui_path(p) for p in changed_paths or ()):
             return None
-        sess = state.peek(session_id)
-        if sess is None:
-            return None
-        phase = sess.phase()
-        if phase in (state.Phase.BASELINED, state.Phase.STALE):
+        snap = state.snapshot(session_id)
+        if snap.phase in (state.Phase.BASELINED, state.Phase.STALE):
             return {"action": "continue", "message": NOT_LOOKED}
-        if phase is state.Phase.CHECKED and sess.check.verdict in FAILING:
-            return {"action": "continue", "message": _failure_message(sess.check)}
+        if snap.phase is state.Phase.CHECKED and snap.check.verdict in FAILING:
+            return {"action": "continue", "message": _failure_message(snap.check)}
     except Exception:
         logger.warning("glance: pre_verify failed", exc_info=True)
     return None
@@ -93,11 +95,11 @@ def _failure_message(check: state.Check) -> str:
 
 def transform_llm_output(response_text: str = "", session_id: str = "", **kwargs) -> str | None:
     try:
-        sess = state.peek(session_id)
-        check = sess.check if sess else None
-        if check is None or not check.compare_png or check.id == sess.delivered_check_id:
+        snap = state.snapshot(session_id)
+        check = snap.latest
+        if check is None or not check.compare_png or check.id == snap.delivered_check_id:
             return None
-        sess.delivered_check_id = check.id
+        state.mark_delivered(session_id, check.id)
         line = f"MEDIA:{check.compare_png}"
         if line in response_text:
             return None
