@@ -12,14 +12,25 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 const LAYOUT_KIND = 'glance-compare/v1'
 const VERDICT_VARIANT = { PASS: 'success', NO_CHANGE: 'warn', ERROR_SCREEN: 'destructive', BLANK: 'destructive' }
 
-function parseResult(result) {
-  if (result && typeof result === 'object') return result
-  if (typeof result !== 'string') return null
+function parseJson(text) {
   try {
-    return JSON.parse(result)
+    const value = JSON.parse(text)
+    return value && typeof value === 'object' ? value : null
   } catch {
     return null
   }
+}
+
+// A PASS result is a multimodal envelope (Glance's JSON text part, then vision_analyze's parts), which
+// the transcript stores as its text parts joined by newlines. Glance's JSON is one line and comes first.
+function parseResult(result) {
+  if (result && typeof result === 'object') {
+    if (!Array.isArray(result.content)) return result
+    const first = result.content.find(part => part && part.type === 'text')
+    return first ? parseResult(first.text) : null
+  }
+  if (typeof result !== 'string') return null
+  return parseJson(result) || parseJson(result.split('\n', 1)[0])
 }
 
 const baseName = p => String(p || '').split(/[\\/]/).pop()
