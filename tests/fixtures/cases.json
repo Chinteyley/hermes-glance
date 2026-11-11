@@ -1,0 +1,57 @@
+[
+  {
+    "case": "button-color",
+    "expected": "PASS",
+    "edit_description": "Place order button background changed from amber to violet (#7C5CFF)."
+  },
+  {
+    "case": "copy-change",
+    "expected": "PASS",
+    "edit_description": "Button label changed from 'Place order' to 'Complete purchase'."
+  },
+  {
+    "case": "noop-wrong-file",
+    "expected": "NO_CHANGE",
+    "edit_description": "Edited Unused.tsx, which App.tsx never imports. Nothing on screen changes."
+  },
+  {
+    "case": "noop-same-style",
+    "expected": "NO_CHANGE",
+    "edit_description": "Added opacity: 1 to the CTA style, which is already the default. Nothing on screen changes."
+  },
+  {
+    "case": "render-error",
+    "expected": "ERROR_SCREEN",
+    "edit_description": "App throws an Error during render. Expo Go shows the red error screen."
+  },
+  {
+    "case": "syntax-error",
+    "expected": "ERROR_SCREEN",
+    "edit_description": "Added an import from a module that does not exist. Metro fails the bundle and shows its error overlay."
+  },
+  {
+    "case": "blank-screen",
+    "expected": "BLANK",
+    "edit_description": "App returns null. The screen shows nothing but the empty root."
+  },
+  {
+    "case": "button-removed",
+    "expected": "PASS",
+    "edit_description": "The Place order button was deleted from the screen. Visible change; the main demo bug."
+  },
+  {
+    "case": "clipped-text",
+    "expected": "PASS",
+    "edit_description": "Title font raised from 26 to 44 on one line with clip, so 'Ethiopia Yirgacheffe' is cut off at the card edge."
+  },
+  {
+    "case": "layout-shift",
+    "expected": "PASS",
+    "edit_description": "Hero image area shrunk from 220 to 120, shifting every element below it up."
+  },
+  {
+    "case": "clock-drift",
+    "expected": "NO_CHANGE",
+    "edit_description": "No source edit. Two frames about 60 s apart; only the status-bar clock differs."
+  }
+]
